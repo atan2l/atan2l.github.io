@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "A homogenous repository pattern for entities with different key types"
+title: "A homogeneous repository pattern for entities with different key types"
 date: 2025-08-17 03:17:10 +0200
 mermaid: true
 tags: csharp functional-programming
