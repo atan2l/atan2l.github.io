@@ -3,7 +3,7 @@ layout: post
 title: "A homogeneous repository pattern for entities with different key types"
 date: 2025-08-17 03:17:10 +0200
 mermaid: true
-tags: csharp functional-programming
+tags: csharp patterns functional-programming
 categories: csharp
 ---
 
@@ -443,6 +443,6 @@ developing in the article at [MoreGenericRepository][more-generic-repository].
 [^1]: Erich Gamma et al., _Design Patterns: Elements of Reusable Object-Oriented
     Software_, Addison Wesley, 1994, p. 331
 
-[^2]: Brian Berns, Existential types in C# - Part 3, 2020,
+[^2]: Brian Berns, _Existential types in C# - Part 3_, 2020,
     <https://dev.to/shimmer/existential-types-in-c-part-3-5778>
 
