@@ -508,7 +508,7 @@ page:
 
 [^4]: _Descripción del Chip DNIe 3.0_, Cuerpo Nacional de Policía, <https://www.dnielectronico.es/PortalDNIe/PRF1_Cons02.action?pag=REF_1078>
 
-[^5]: Cuerpo Nacional de Policía, <http://pki.policia.es/dnie/certs/>
+[^5]: Cuerpo Nacional de Policía, <https://pki.policia.es/dnie/certs/>
 
 [^6]: Josh Aas, _Ending OCSP Support in 2025_, Let's Encrypt, 2024-12-05, <https://letsencrypt.org/2024/12/05/ending-ocsp>
 
