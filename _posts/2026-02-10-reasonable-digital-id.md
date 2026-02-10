@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Reasonable Digital ID for people"
-date: 2025-12-22 06:58:20 +0100
+date: 2026-02-10 06:02:20 +0100
 mermaid: true
 tags: rust privacy authentication-services
 categories: rust
@@ -112,7 +112,7 @@ limitations of the system.
 
 The system involves the following actors:
 
-- Resource owner (user): the individual authenticating user their national eID (DNIe).
+- Resource owner (user): the individual authenticating with their national eID (DNIe).
 - Authorisation service: the service described in this article, responsible for
   authentication, consent and token issuance.
 - Client (relying party): an application requesting authentication and a
@@ -282,7 +282,7 @@ require permanent possession of a user's identity, and that existing national
 eID infrastructure can be leveraged to provide strong authentication without
 replicating the widespread data-extractive practices.
 
-## High level overview
+## High-level overview
 
 The following diagram shows the authentication flow of the system using the
 authorisation code flow per OAuth2 and it'll serve as a guide for the
@@ -290,7 +290,7 @@ following sections.
 
 ```mermaid
 sequenceDiagram
-    actor A as User
+    actor A as Resource Owner
     participant B as Client
     box ONCE Authentication Service
     participant C as mTLS Service
@@ -312,6 +312,190 @@ sequenceDiagram
     D ->> D: Decrypt information in memory
     D ->> B: Issue identity token with the consented information
 ```
+
+The participants in this diagram mostly follow OAuth2 terminology, but there
+isn't a resource server because there aren't protected resources that the client
+may access and in fact, to satisfy the OIDC standards, an opaque access token is
+issued which only contains random data since it can't be used anywhere.
+
+The most relevant part of the diagram is the components of the ONCE
+Authentication Service, as its functionality is separated across two services
+due to the nature of mutual TLS. They make up the two sides of the coin that is
+this implementation of OIDC which relies on client certificates to provide
+identity information.
+
+### mTLS Service
+
+The mTLS Service, so-called because of its requirement for a client certificate
+on all incoming connections is responsible for ensuring the provided certificate
+has been issued by a trusted CA (DNIe CA) and retrieving the relevant
+information stored in the user's certificate.
+
+This service is only accessed by the resource owner as otherwise, clients would
+also a trusted certificate. As such, only the OAuth `/authorize` endpoint is
+implemented in this service.
+
+The endpoint implementation critically handles generating the code which will
+later be exchanged for the resource owner's information by the client. The code,
+which is randomly generated from a cryptographically appropriate source
+(`OsRng`), is used as the Initial Key Material from which an encryption key is
+derived using HKDF.
+
+The encryption key is used to encrypt the resource owner's information with
+AES-256-GCM so that it can safely be stored in the transient storage until it's
+retrieved as part of the code exchange, thus maintaining no plaintext personally
+identifiable information.
+
+To associate a resource owner's data with a request in the database, the primary
+key includes the code's SHA256 hash, otherwise the encrypted data would be
+stored with the encryption key, making it pointless.
+
+### Public Service
+
+The Public Service is responsible for exchanging the authorisation code provided
+to a client by a resource owner for a token with the requested information about
+the resource owner.
+
+The resource owner's information, associated to the code, is present in the
+transient storage and can be retrieved by reversing the process using during the
+code creation and data storage.
+
+Therefore, to retrieve the resource owner's information, the code is hashed and
+all associated information based on its hash is retrieved and deleted from
+storage. The retrieved information is decrypted using the code as the encryption
+key and it's used to populate the OIDC ID token.
+
+With this, access to the resource owner's data is ever only briefly in the hands
+of the server or the server provider during its in-memory processing. Whenever
+such sensitive information is handled elsewhere other than in-memory, it's
+encrypted with a key not under the server's control that's handed over to the
+resource owner themselves, giving them as much control over their data as
+possible.
+
+## Conclusion
+
+At the time of writing this article, the service is little more than a proof of
+concept. In fact, while I mention the use of scopes to restrict the degree of
+access to an user's information, at the moment only the `openid` scope is
+supported and retrieves all user information indiscriminately.
+
+That being said, I stand by my belief that this is a genuinely more respectful
+method to verify a person's identity. Ideally, consumers of such a service
+wouldn't keep the information provided on file ad aeternum and it would suffice
+to toggle a verification flag, but even if they did keep the information
+forever, it's considerably so much better than keeping pictures of IDs.
+
+Overall, I'm happy to leave this project rest as a proof of concept for the time
+being. I'll probably return to tinkering with it again to fix some of its flaws
+(we don't talk about the lack of `nonce` and `state` in the OAuth
+implementation) as well as actually implementing access restrictions based on
+scope. Alas, I think that will have to wait until I'm not so busy with work and
+studying for university.
+
+Nevertheless, I've thoroughly enjoyed learning more about TLS as a whole,
+attempting to design a privacy-first system and using Rust for more complex
+projects as I love the language but I feel like I'm not proficient enough with
+it yet.
+
+A particularly honourable mention to [Aurelia Molzer](https://github.com/197g)
+and everyone involved in the development of
+[`oxide-auth`](https://github.com/197g/oxide-auth) for creating such a flexible
+crate to implement OAuth2 servers. I feel like my understanding of OAuth2 and
+its different stages has deepened considerably after implementing my own OAuth2
+endpoint with this crate.
+
+## A little demo
+
+To show what a consumer of this service would look like I wrote a small demo
+application with C#/.NET, using the
+`Microsoft.AspNetCore.Authentication.OpenIdConnect` package to demonstrate that
+the implementation is at least mostly standards compliant and a generic OIDC
+package can be configured to consume the service out of the box.
+
+Here's the very simple builder config that reads the settings and points to the
+ONCE service:
+
+```csharp
+builder.Services.AddAuthentication(
+           options =>
+           {
+               options.DefaultScheme          = CookieAuthenticationDefaults.AuthenticationScheme;
+               options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+           }
+       )
+       .AddCookie()
+       .AddOpenIdConnect(
+           options =>
+           {
+               IConfigurationSection oidcConfig = builder.Configuration.GetSection("Oidc");
+               options.Authority = oidcConfig["Authority"] ??
+                                   throw new InvalidOperationException("OIDC Authority is missing.");
+               options.ClientId = oidcConfig["ClientId"] ??
+                                  throw new InvalidOperationException("OIDC ClientId is missing.");
+               options.ResponseType = oidcConfig["ResponseType"] ?? "code";
+               options.SaveTokens   = true;
+
+               options.ProtocolValidator =
+                   new OpenIdConnectProtocolValidator { RequireNonce = false, RequireState = false };
+
+               options.BackchannelHttpHandler = new HttpClientHandler
+               {
+                   ServerCertificateCustomValidationCallback =
+                       HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+               };
+
+               // Scope "openid" is added by default, but we can be explicit
+               options.Scope.Clear();
+               options.Scope.Add("openid");
+
+               options.TokenValidationParameters = new TokenValidationParameters
+               {
+                   NameClaimType = ClaimTypes.GivenName, ValidateIssuer = true,
+               };
+
+               options.Events = new OpenIdConnectEvents
+               {
+                   OnRedirectToIdentityProvider = context =>
+                                                  {
+                                                      /*
+                                                       * If it's a registration request, we might want to pass a
+                                                       * parameter. Usually this is handled by the provider if prompted
+                                                       * or via a specific ACR/prompt
+                                                       */
+                                                      if (context.Properties.Items.TryGetValue(
+                                                              "prompt",
+                                                              out string? prompt
+                                                          ))
+                                                      {
+                                                          context.ProtocolMessage.Prompt = prompt;
+                                                      }
+
+                                                      return Task.CompletedTask;
+                                                  }
+               };
+           }
+       );
+```
+
+And this is what it looks like:
+
+![ONCE demo homepage](/assets/img/swappy-20260210-051326.png)
+
+Clicking either "Login" or "Register" redirects us to the OIDC provider, where
+the browser requests a certificate:
+
+![Certificate request](/assets/img/swappy-20260210-052458.png)
+
+After sending the certificate, we're taken to the consent page where we're shown
+what information will be shared with the client:
+
+![Consent form](/assets/img/swappy-20260210-052934.png)
+
+Upon allowing access to our information, we're taken back to the client where we
+can see the information that has been shared with the client in our profile
+page:
+
+![Profile information](/assets/img/swappy-20260210-053227.png)
 
 [^1]: Helen Livingstone, _Australia has banned social media for kids under 16. How will
     it work?_, BBC, 2025-12-10, <https://www.bbc.com/news/articles/cwyp9d3ddqyo>
